@@ -1,28 +1,39 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Article Recommender</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <style>
-            .category-card.selected {
-                border: 2px solid #2563eb;  /* Darker blue border */
-                background-color: #bfdbfe;  /* Darker blue background */
-                transform: scale(1.02);     /* Slight zoom effect */
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Recommender</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .category-card.selected {
+            border: 2px solid #2563eb;
+            background-color: #bfdbfe;
+            transform: scale(1.02);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .loading {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
             }
-        </style>
-    </head>
+            50% {
+                opacity: .5;
+            }
+        }
+    </style>
+</head>
 <body class="bg-gray-100 min-h-screen p-8">
     <div class="max-w-6xl mx-auto">
-        <h1 class="text-3xl font-bold text-center mb-8">Interest-Based Article Recommender</h1>
+        <h1 class="text-3xl font-bold text-center mb-8">Smart News Recommender</h1>
 
-        <div id="api-limits" class="text-sm text-gray-600 text-center mb-4"></div>
+        <div id="scraping-status" class="text-sm text-gray-600 text-center mb-4"></div>
         
         <div class="mb-8">
             <h2 class="text-xl font-semibold mb-4">Select 3 Categories of Interest: <span id="selected-count" class="text-blue-600">0/3</span></h2>
-            <div class="grid grid-cols-3 md:grid-cols-5 gap-4 mb-4" id="categories-container">
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 mb-4" id="categories-container">
                 {% for category in config.CATEGORIES %}
                 <div class="category-card cursor-pointer p-4 bg-white rounded-lg shadow hover:shadow-md transition-all duration-200"
                      data-id="{{ category.id }}" data-name="{{ category.name }}">
@@ -38,6 +49,16 @@
                     Get Recommendations
                 </button>
             </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading-state" class="hidden">
+            <div class="flex items-center justify-center space-x-2 mb-8">
+                <div class="w-4 h-4 bg-blue-500 rounded-full loading"></div>
+                <div class="w-4 h-4 bg-blue-500 rounded-full loading" style="animation-delay: 0.2s"></div>
+                <div class="w-4 h-4 bg-blue-500 rounded-full loading" style="animation-delay: 0.4s"></div>
+            </div>
+            <p class="text-center text-gray-600">Fetching your personalized news recommendations...</p>
         </div>
 
         <div id="recommendations" class="space-y-8 hidden">
@@ -59,7 +80,6 @@
         const selectedCategories = new Set();
         const maxSelections = 3;
 
-        // Add the formatDate function
         function formatDate(dateString) {
             const date = new Date(dateString);
             return date.toLocaleDateString('en-US', {
@@ -69,20 +89,20 @@
             });
         }
 
-        // Add this function to check API limits
-        async function checkApiLimits() {
+        async function checkScrapingStatus() {
             try {
-                const response = await fetch('/check_api_limits');
-                const limits = await response.json();
-                const limitsDisplay = document.getElementById('api-limits');
-                limitsDisplay.textContent = `API Requests Remaining: ${limits.remaining}/${limits.limit}`;
+                const response = await fetch('/check_scraping_status');
+                const status = await response.json();
+                const statusDisplay = document.getElementById('scraping-status');
+                statusDisplay.textContent = `Articles cached: ${status.cache_size} | Last update: ${status.last_scrape ? new Date(status.last_scrape).toLocaleTimeString() : 'Never'}`;
             } catch (error) {
-                console.error('Error checking API limits:', error);
+                console.error('Error checking scraping status:', error);
             }
         }
 
-        // Check API limits on page load
-        checkApiLimits();
+        // Check scraping status periodically
+        checkScrapingStatus();
+        setInterval(checkScrapingStatus, 30000);
 
         function updateSelectedCount() {
             const countDisplay = document.getElementById('selected-count');
@@ -107,6 +127,10 @@
 
         document.getElementById('get-recommendations').addEventListener('click', async () => {
             try {
+                // Show loading state
+                document.getElementById('loading-state').classList.remove('hidden');
+                document.getElementById('recommendations').classList.add('hidden');
+
                 const response = await fetch('/get_recommendations', {
                     method: 'POST',
                     headers: {
@@ -155,9 +179,17 @@
                     </div>
                 `).join('');
 
+                // Hide loading state and show recommendations
+                document.getElementById('loading-state').classList.add('hidden');
                 document.getElementById('recommendations').classList.remove('hidden');
+
+                // Update scraping status
+                checkScrapingStatus();
             } catch (error) {
                 console.error('Error fetching recommendations:', error);
+                // Show error message
+                document.getElementById('loading-state').classList.add('hidden');
+                alert('Error fetching recommendations. Please try again.');
             }
         });
     </script>

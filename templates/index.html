@@ -1,26 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Article Recommender</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .category-card.selected {
-            border: 2px solid #4CAF50;
-            background-color: #E8F5E9;
-        }
-    </style>
-</head>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Article Recommender</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            .category-card.selected {
+                border: 2px solid #2563eb;  /* Darker blue border */
+                background-color: #bfdbfe;  /* Darker blue background */
+                transform: scale(1.02);     /* Slight zoom effect */
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+        </style>
+    </head>
 <body class="bg-gray-100 min-h-screen p-8">
-    <div class="max-w-4xl mx-auto">
-        <h1 class="text-3xl font-bold text-center mb-8">Article Recommender</h1>
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold text-center mb-8">Interest-Based Article Recommender</h1>
+
+        <div id="api-limits" class="text-sm text-gray-600 text-center mb-4"></div>
         
         <div class="mb-8">
-            <h2 class="text-xl font-semibold mb-4">Select 3 Categories:</h2>
-            <div class="grid grid-cols-3 gap-4 mb-4" id="categories-container">
+            <h2 class="text-xl font-semibold mb-4">Select 3 Categories of Interest: <span id="selected-count" class="text-blue-600">0/3</span></h2>
+            <div class="grid grid-cols-3 md:grid-cols-5 gap-4 mb-4" id="categories-container">
                 {% for category in config.CATEGORIES %}
-                <div class="category-card cursor-pointer p-4 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+                <div class="category-card cursor-pointer p-4 bg-white rounded-lg shadow hover:shadow-md transition-all duration-200"
                      data-id="{{ category.id }}" data-name="{{ category.name }}">
                     <div class="text-4xl mb-2">{{ category.icon }}</div>
                     <div class="font-medium">{{ category.name }}</div>
@@ -29,22 +33,61 @@
             </div>
             <div class="text-center">
                 <button id="get-recommendations" 
-                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400"
+                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors duration-200"
                         disabled>
                     Get Recommendations
                 </button>
             </div>
         </div>
 
-        <div id="recommendations" class="space-y-4 hidden">
-            <h2 class="text-xl font-semibold mb-4">Recommended Articles:</h2>
-            <div id="recommendations-container"></div>
+        <div id="recommendations" class="space-y-8 hidden">
+            <!-- Individual Category Recommendations -->
+            <div id="individual-recommendations">
+                <h2 class="text-2xl font-semibold mb-4">Category-Specific Recommendations</h2>
+                <div id="individual-container" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
+            </div>
+
+            <!-- Combined Recommendations -->
+            <div id="combined-recommendations">
+                <h2 class="text-2xl font-semibold mb-4">Combined Interest Recommendations</h2>
+                <div id="combined-container" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
+            </div>
         </div>
     </div>
 
     <script>
         const selectedCategories = new Set();
         const maxSelections = 3;
+
+        // Add the formatDate function
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        }
+
+        // Add this function to check API limits
+        async function checkApiLimits() {
+            try {
+                const response = await fetch('/check_api_limits');
+                const limits = await response.json();
+                const limitsDisplay = document.getElementById('api-limits');
+                limitsDisplay.textContent = `API Requests Remaining: ${limits.remaining}/${limits.limit}`;
+            } catch (error) {
+                console.error('Error checking API limits:', error);
+            }
+        }
+
+        // Check API limits on page load
+        checkApiLimits();
+
+        function updateSelectedCount() {
+            const countDisplay = document.getElementById('selected-count');
+            countDisplay.textContent = `${selectedCategories.size}/3`;
+        }
 
         document.querySelectorAll('.category-card').forEach(card => {
             card.addEventListener('click', () => {
@@ -56,33 +99,66 @@
                     selectedCategories.add(card.dataset.name);
                 }
 
+                updateSelectedCount();
                 const button = document.getElementById('get-recommendations');
                 button.disabled = selectedCategories.size !== maxSelections;
             });
         });
 
         document.getElementById('get-recommendations').addEventListener('click', async () => {
-            const response = await fetch('/get_recommendations', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    categories: Array.from(selectedCategories)
-                })
-            });
+            try {
+                const response = await fetch('/get_recommendations', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        categories: Array.from(selectedCategories)
+                    })
+                });
 
-            const recommendations = await response.json();
-            const container = document.getElementById('recommendations-container');
-            container.innerHTML = recommendations.map(article => `
-                <div class="bg-white p-4 rounded-lg shadow">
-                    <h3 class="text-lg font-semibold mb-2">${article.title}</h3>
-                    <p class="text-gray-600 mb-2">${article.description}</p>
-                    <a href="${article.url}" target="_blank" class="text-blue-500 hover:underline">Read more</a>
-                </div>
-            `).join('');
+                const recommendations = await response.json();
+                
+                // Display individual recommendations
+                const individualContainer = document.getElementById('individual-container');
+                individualContainer.innerHTML = recommendations.individual.map(article => `
+                    <div class="bg-white p-4 rounded-lg shadow hover:shadow-md transition-shadow">
+                        <span class="inline-block px-2 py-1 text-sm bg-blue-100 text-blue-800 rounded mb-2">
+                            ${article.category}
+                        </span>
+                        <h3 class="text-lg font-semibold mb-2">${article.title}</h3>
+                        <p class="text-gray-600 mb-2 text-sm">${article.description}</p>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-gray-500">${article.source}</span>
+                            <span class="text-gray-500">${formatDate(article.date)}</span>
+                        </div>
+                        <a href="${article.url}" target="_blank" 
+                           class="mt-2 inline-block text-blue-500 hover:underline">Read more →</a>
+                    </div>
+                `).join('');
 
-            document.getElementById('recommendations').classList.remove('hidden');
+                // Display combined recommendations
+                const combinedContainer = document.getElementById('combined-container');
+                combinedContainer.innerHTML = recommendations.combined.map(article => `
+                    <div class="bg-white p-4 rounded-lg shadow hover:shadow-md transition-shadow">
+                        <span class="inline-block px-2 py-1 text-sm bg-purple-100 text-purple-800 rounded mb-2">
+                            ${article.category}
+                        </span>
+                        <h3 class="text-lg font-semibold mb-2">${article.title}</h3>
+                        <p class="text-gray-600 mb-2 text-sm">${article.description}</p>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-gray-500">${article.source}</span>
+                            <span class="text-gray-500">${formatDate(article.date)}</span>
+                        </div>
+                        <a href="${article.url}" target="_blank" 
+                           class="mt-2 inline-block text-blue-500 hover:underline">Read more →</a>
+                    </div>
+                `).join('');
+
+                document.getElementById('recommendations').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error fetching recommendations:', error);
+            }
         });
     </script>
 </body>

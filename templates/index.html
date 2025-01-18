@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Article Recommender</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .category-card.selected {
+            border: 2px solid #4CAF50;
+            background-color: #E8F5E9;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold text-center mb-8">Article Recommender</h1>
+        
+        <div class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">Select 3 Categories:</h2>
+            <div class="grid grid-cols-3 gap-4 mb-4" id="categories-container">
+                {% for category in config.CATEGORIES %}
+                <div class="category-card cursor-pointer p-4 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+                     data-id="{{ category.id }}" data-name="{{ category.name }}">
+                    <div class="text-4xl mb-2">{{ category.icon }}</div>
+                    <div class="font-medium">{{ category.name }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="text-center">
+                <button id="get-recommendations" 
+                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400"
+                        disabled>
+                    Get Recommendations
+                </button>
+            </div>
+        </div>
+
+        <div id="recommendations" class="space-y-4 hidden">
+            <h2 class="text-xl font-semibold mb-4">Recommended Articles:</h2>
+            <div id="recommendations-container"></div>
+        </div>
+    </div>
+
+    <script>
+        const selectedCategories = new Set();
+        const maxSelections = 3;
+
+        document.querySelectorAll('.category-card').forEach(card => {
+            card.addEventListener('click', () => {
+                if (card.classList.contains('selected')) {
+                    card.classList.remove('selected');
+                    selectedCategories.delete(card.dataset.name);
+                } else if (selectedCategories.size < maxSelections) {
+                    card.classList.add('selected');
+                    selectedCategories.add(card.dataset.name);
+                }
+
+                const button = document.getElementById('get-recommendations');
+                button.disabled = selectedCategories.size !== maxSelections;
+            });
+        });
+
+        document.getElementById('get-recommendations').addEventListener('click', async () => {
+            const response = await fetch('/get_recommendations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    categories: Array.from(selectedCategories)
+                })
+            });
+
+            const recommendations = await response.json();
+            const container = document.getElementById('recommendations-container');
+            container.innerHTML = recommendations.map(article => `
+                <div class="bg-white p-4 rounded-lg shadow">
+                    <h3 class="text-lg font-semibold mb-2">${article.title}</h3>
+                    <p class="text-gray-600 mb-2">${article.description}</p>
+                    <a href="${article.url}" target="_blank" class="text-blue-500 hover:underline">Read more</a>
+                </div>
+            `).join('');
+
+            document.getElementById('recommendations').classList.remove('hidden');
+        });
+    </script>
+</body>
+</html>

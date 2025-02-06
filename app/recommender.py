@@ -1,102 +1,78 @@
 # recommender.py
-from typing import List, Dict
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import firebase_admin
-from firebase_admin import credentials, firestore
-from datetime import datetime
+from .feed_parser import FeedParser
+from urllib.parse import urlparse
+import torch
+import asyncio
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, AutoModel
 import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
-class BasicRecommender:
+class EnhancedRecommender:
     def __init__(self):
-        # Initialize Firebase (you'll need to add your credentials)
-        if not firebase_admin._apps:
-            cred = credentials.Certificate('service_acc.json')
-            firebase_admin.initialize_app(cred)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = AutoModel.from_pretrained('bert-base-uncased').to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        self.feed_parser = FeedParser()
+
+    def generate_embedding(self, text):
+        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(self.device)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        # Reshape to ensure 2D array
+        embedding = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
+        return embedding.reshape(1, -1)
+
+    async def get_recommendations(self, user_profile: str, feed_urls: list, n_recommendations=5):
+        all_entries = []
         
-        self.db = firestore.client()
-        self.vectorizer = TfidfVectorizer(stop_words='english')
-    
-    async def get_user_links(self, user_id: str) -> List[Dict]:
-        """Get user's saved links"""
-        links = []
-        links_ref = self.db.collection('users').document(user_id).collection('links')
+        # Fetch from all sources concurrently
+        tasks = [self.feed_parser.parse_feed(url) for url in feed_urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Convert to async operation
-        docs = links_ref.order_by('timestamp', direction='DESCENDING').limit(50).stream()
+        for entries in results:
+            if isinstance(entries, list):  # Skip failed feeds
+                all_entries.extend(entries)
+
+        if not all_entries:
+            return []
+
+        # Ensure source diversity
+        source_groups = {}
+        for entry in all_entries:
+            source = urlparse(entry['link']).netloc
+            if source not in source_groups:
+                source_groups[source] = []
+            source_groups[source].append(entry)
+
+        # Get embeddings and similarities for each source group
+        recommendations = []
+        sources = list(source_groups.keys())
+        np.random.shuffle(sources)  # Randomize source order
         
-        for doc in docs:
-            data = doc.to_dict()
-            links.append({
-                'id': doc.id,
-                'url': data.get('url'),
-                'title': data.get('title', ''),  # Provide default empty string
-                'timestamp': data.get('timestamp')
-            })
+        user_embedding = self.generate_embedding(user_profile)
         
-        return links
-    
-    async def get_other_users_links(self, current_user_id: str) -> List[Dict]:
-        """Get links from other users (limited sample for recommendations)"""
-        all_links = []
-        users_ref = self.db.collection('users')
-        
-        # Convert to async operation
-        user_docs = users_ref.limit(10).stream()
-        
-        for user_doc in user_docs:
-            if user_doc.id == current_user_id:
+        while len(recommendations) < n_recommendations and sources:
+            source = sources.pop(0)
+            entries = source_groups[source]
+            
+            if not entries:
                 continue
                 
-            links_ref = users_ref.document(user_doc.id).collection('links')
-            link_docs = links_ref.order_by('timestamp', direction='DESCENDING').limit(20).stream()
+            # Get top entry from this source
+            embeddings = np.vstack([
+                self.generate_embedding(f"{e['title']} {e['description']}")
+                for e in entries
+            ])
             
-            for doc in link_docs:
-                data = doc.to_dict()
-                all_links.append({
-                    'id': doc.id,
-                    'url': data.get('url'),
-                    'title': data.get('title', ''),  # Provide default empty string
-                    'timestamp': data.get('timestamp')
-                })
-        
-        return all_links
-    
-    def get_recommendations(self, user_links: List[Dict], candidate_links: List[Dict], n_recommendations: int = 5) -> List[Dict]:
-        # Filter links with non-empty titles
-        user_links = [link for link in user_links if link.get('title') and link['title'].strip()]
-        candidate_links = [link for link in candidate_links if link.get('title') and link['title'].strip()]
+            similarities = cosine_similarity(user_embedding, embeddings)[0]
+            best_idx = similarities.argmax()
+            
+            recommendations.append(entries[best_idx])
+            # Remove selected entry
+            entries.pop(best_idx)
+            
+            # Put source back if it has more entries
+            if entries:
+                sources.append(source)
 
-        if not user_links or not candidate_links:
-            return []
-        
-        # Extract titles
-        user_titles = [link['title'] for link in user_links]
-        candidate_titles = [link['title'] for link in candidate_links]
-        
-        try:
-            # Combine titles for TF-IDF
-            all_titles = user_titles + candidate_titles
-            
-            # Create TF-IDF matrix
-            tfidf_matrix = self.vectorizer.fit_transform(all_titles)
-            
-            # Calculate average user profile
-            user_profile = np.asarray(tfidf_matrix[:len(user_titles)].mean(axis=0)).flatten()
-            
-            # Calculate similarities
-            candidate_matrix = tfidf_matrix[len(user_titles):]
-            candidate_similarities = cosine_similarity(
-                user_profile.reshape(1, -1),
-                candidate_matrix
-            )[0]
-            
-            # Get top recommendations
-            top_indices = candidate_similarities.argsort()[-n_recommendations:][::-1]
-            recommendations = [candidate_links[i] for i in top_indices]
-            
-            return recommendations
-            
-        except Exception as e:
-            print(f"Error generating recommendations: {e}")
-            return []
+        return recommendations

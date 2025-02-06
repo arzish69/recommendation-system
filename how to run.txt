@@ -1,0 +1,1 @@
+PS C:\Users\Taroneez\Desktop\recommendation system> uvicorn app.app:app --reload

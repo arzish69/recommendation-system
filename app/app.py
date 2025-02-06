@@ -1,9 +1,9 @@
 # app.py
 from fastapi import FastAPI, HTTPException, Depends, Header
-from firebase_admin import auth
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, List
-from app.recommender import BasicRecommender
+from firebase_admin import initialize_app, credentials, auth
+from typing import List, Optional
+from .recommender import EnhancedRecommender
 
 app = FastAPI()
 app.add_middleware(
@@ -13,55 +13,53 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Firebase initialization
+cred = credentials.Certificate('service_acc.json')
+initialize_app(cred)
 
-recommender = BasicRecommender()
+recommender = EnhancedRecommender()
 
 async def get_current_user(authorization: str = Header(None)):
-    """Basic Firebase auth middleware with better error handling"""
     if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization header missing"
-        )
+        raise HTTPException(status_code=401, detail="Authorization header missing")
     try:
         token = authorization.replace('Bearer ', '')
         decoded_token = auth.verify_id_token(token)
         return decoded_token['uid']
     except Exception as e:
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid authentication: {str(e)}"
-        )
+        raise HTTPException(status_code=401, detail=f"Invalid authentication: {str(e)}")
 
 @app.get("/api/recommendations")
-async def get_recommendations(user_id: str = Depends(get_current_user)):
+async def get_recommendations(
+    user_profile: str = "Default user profile",
+    feed_urls: Optional[List[str]] = None,
+    user_id: str = Depends(get_current_user)
+):
+    if not feed_urls:
+        feed_urls = [
+            "https://techcrunch.com/feed/",
+            "https://news.ycombinator.com/rss",
+            "https://feeds.feedburner.com/TheHackersNews",
+            "https://www.wired.com/feed/rss",
+            "https://www.theverge.com/rss/index.xml"
+        ]
+
     try:
-        # Get user's links
-        user_links = await recommender.get_user_links(user_id)
-        if not user_links:
-            return {"recommendations": [], "message": "No user links found"}
-            
-        # Get candidate links from other users
-        candidate_links = await recommender.get_other_users_links(user_id)
-        if not candidate_links:
-            return {"recommendations": [], "message": "No candidate links found"}
-        
-        # Generate recommendations
-        recommendations = recommender.get_recommendations(user_links, candidate_links)
-        
+        recommendations = await recommender.get_recommendations(
+            user_profile,
+            feed_urls
+        )
         return {
             "recommendations": recommendations,
-            "user_links_count": len(user_links),
-            "candidate_links_count": len(candidate_links)
+            "user_id": user_id
         }
-        
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating recommendations: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.on_event("shutdown")
+async def shutdown_event():
+    await recommender.close()
 
-# Add a root endpoint for health check
 @app.get("/")
 async def root():
     return {"status": "ok"}
